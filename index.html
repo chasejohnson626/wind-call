@@ -50,7 +50,7 @@
             border: 5px solid var(--border-color);
             position: relative;
             margin: 20px auto;
-            transition: transform 0.2s linear;
+            transition: transform 0.3s ease-out;
         }
 
         .compass-rose {
@@ -59,7 +59,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="47" y="10" font-size="8" fill="%23ecf0f1" font-family="sans-serif">N</text><text x="47" y="98" font-size="8" fill="%23ecf0f1" font-family="sans-serif">S</text><text x="90" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">E</text><text x="4" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">W</text></svg>');
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="47" y="10" font-size="8" fill="%23ecf0f1" font-family="sans-serif" font-weight="bold">N</text><text x="47" y="98" font-size="8" fill="%23ecf0f1" font-family="sans-serif">S</text><text x="90" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">E</text><text x="4" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">W</text></svg>');
+            transition: transform 0.3s ease-out;
         }
         
         .needle, .wind-needle {
@@ -68,6 +69,7 @@
             height: 100%;
             left: calc(50% - 2px);
             top: 0;
+            transition: transform 0.3s ease-out;
         }
 
         .needle::before {
@@ -84,7 +86,6 @@
         
         .wind-needle {
             display: none; /* Hidden by default */
-            transition: transform 0.2s ease-in-out;
         }
 
         .wind-needle::before {
@@ -195,7 +196,7 @@
             
             <div class="compass-container">
                 <div class="compass" id="compass">
-                    <div class="compass-rose"></div>
+                    <div class="compass-rose" id="compass-rose"></div>
                     <div class="wind-needle" id="wind-needle"></div>
                     <div class="needle"></div>
                 </div>
@@ -238,6 +239,7 @@
             const appContainer = document.getElementById('app-container');
 
             const compass = document.getElementById('compass');
+            const compassRose = document.getElementById('compass-rose');
             const windNeedle = document.getElementById('wind-needle');
             const headingDisplay = document.getElementById('heading');
             const setWindBtn = document.getElementById('set-wind-btn');
@@ -247,9 +249,25 @@
 
             let currentHeading = 0;
             let windDirection = null;
+            let calibrationOffset = 0;
+            let isIOS = false;
+
+            // Detect iOS
+            const detectIOS = () => {
+                return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            };
+
+            // Function to normalize heading to 0-360
+            const normalizeHeading = (heading) => {
+                heading = heading % 360;
+                return heading < 0 ? heading + 360 : heading;
+            };
 
             // Function to request permission on iOS 13+
             const requestDeviceOrientation = () => {
+                isIOS = detectIOS();
+                
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                     DeviceOrientationEvent.requestPermission()
                         .then(permissionState => {
@@ -273,29 +291,41 @@
             permissionButton.addEventListener('click', requestDeviceOrientation);
 
             function handleOrientation(event) {
-                // Use webkitCompassHeading for iOS, or alpha for other devices
-                let heading = event.webkitCompassHeading || event.alpha;
+                let heading;
 
-                if (heading === null) return;
-                
-                currentHeading = heading;
+                if (isIOS && event.webkitCompassHeading !== undefined && event.webkitCompassHeading !== null) {
+                    // iOS with webkitCompassHeading (true compass heading)
+                    heading = event.webkitCompassHeading;
+                } else if (event.alpha !== null) {
+                    // Use alpha for other devices
+                    // Convert to compass heading (0° = North, clockwise)
+                    heading = 360 - event.alpha;
+                } else {
+                    return; // No orientation data available
+                }
+
+                // Apply calibration offset and normalize
+                currentHeading = normalizeHeading(heading + calibrationOffset);
 
                 // Update UI
                 headingDisplay.textContent = Math.round(currentHeading);
-                compass.style.transform = `rotate(${-currentHeading}deg)`;
-                
-                // If wind direction is set, calculate crosswind
+
+                // Rotate compass rose to keep North at top
+                compassRose.style.transform = `rotate(${-currentHeading}deg)`;
+
+                // Keep wind needle pointing to absolute wind direction
                 if (windDirection !== null) {
+                    const relativeWindDirection = windDirection - currentHeading;
+                    windNeedle.style.transform = `rotate(${relativeWindDirection}deg)`;
                     calculateCrosswind();
                 }
             }
 
             setWindBtn.addEventListener('click', () => {
                 windDirection = currentHeading;
-                windNeedle.style.transform = `rotate(${windDirection}deg)`;
                 windNeedle.style.display = 'block';
                 setWindBtn.textContent = `Wind Set: ${Math.round(windDirection)}°`;
-                console.log(`Wind direction set to: ${windDirection}`);
+                console.log(`Wind direction set to: ${windDirection}°`);
                 calculateCrosswind(); // Initial calculation
             });
 
@@ -308,12 +338,12 @@
             function calculateCrosswind() {
                 const windSpeed = parseFloat(windSpeedInput.value) || 0;
                 
-                // Angle difference in degrees
+                // Angle difference in degrees (wind direction relative to current heading)
                 let angleDifference = windDirection - currentHeading;
 
                 // Normalize angle to be between -180 and 180
-                if (angleDifference > 180) angleDifference -= 360;
-                if (angleDifference < -180) angleDifference += 360;
+                while (angleDifference > 180) angleDifference -= 360;
+                while (angleDifference < -180) angleDifference += 360;
 
                 // Convert angle to radians for Math.sin()
                 const angleInRadians = angleDifference * (Math.PI / 180);
@@ -326,12 +356,12 @@
 
                 // Determine direction (Left/Right)
                 let direction = '---';
-                if (crosswindSpeed > 0.1) {
-                    direction = 'From Left';
-                } else if (crosswindSpeed < -0.1) {
-                    direction = 'From Right';
-                } else {
+                if (Math.abs(crosswindSpeed) < 0.1) {
                     direction = 'Head/Tail Wind';
+                } else if (crosswindSpeed > 0) {
+                    direction = 'From Left';
+                } else {
+                    direction = 'From Right';
                 }
                 crosswindDirectionDisplay.textContent = direction;
             }
@@ -339,7 +369,7 @@
     </script>
 
     <script>
-        // Inline Manifest
+        // Inline Manifest and Service Worker code remains the same...
         const manifest = {
             "name": "Crosswind Calculator",
             "short_name": "Crosswind",
@@ -362,12 +392,11 @@
         const manifestURL = URL.createObjectURL(manifestBlob);
         document.querySelector('link[rel="manifest"]').setAttribute('href', manifestURL);
 
-        // Inline Service Worker
         const swCode = `
             const CACHE_NAME = 'crosswind-cache-v1';
             const ASSETS_TO_CACHE = [
                 '/',
-                'index.html' // Should match the name of your file
+                'index.html'
             ];
 
             self.addEventListener('install', event => {
@@ -382,7 +411,6 @@
             self.addEventListener('fetch', event => {
                 event.respondWith(
                     caches.match(event.request).then(response => {
-                        // Cache hit - return response
                         return response || fetch(event.request);
                     })
                 );
