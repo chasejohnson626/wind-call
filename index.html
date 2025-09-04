@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Crosswind Calculator</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#2c3e50">
+    <link rel="apple-touch-icon" href="https://assets.codepen.io/296057/wind-icon-192.png">
+    <link rel="manifest" href="manifest.json">
+
+    <style>
+        :root {
+            --bg-color: #2c3e50;
+            --compass-bg: #34495e;
+            --needle-color: #e74c3c;
+            --wind-needle-color: #3498db;
+            --text-color: #ecf0f1;
+            --border-color: #7f8c8d;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            height: 100vh;
+            margin: 0;
+            overscroll-behavior: none;
+            text-align: center;
+        }
+
+        .container {
+            padding: 20px;
+            width: 100%;
+            max-width: 400px;
+            box-sizing: border-box;
+        }
+        
+        /* Compass Styles */
+        .compass {
+            width: 250px;
+            height: 250px;
+            background-color: var(--compass-bg);
+            border-radius: 50%;
+            border: 5px solid var(--border-color);
+            position: relative;
+            margin: 20px auto;
+            transition: transform 0.2s linear;
+        }
+
+        .compass-rose {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="47" y="10" font-size="8" fill="%23ecf0f1" font-family="sans-serif">N</text><text x="47" y="98" font-size="8" fill="%23ecf0f1" font-family="sans-serif">S</text><text x="90" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">E</text><text x="4" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">W</text></svg>');
+        }
+        
+        .needle, .wind-needle {
+            position: absolute;
+            width: 4px;
+            height: 100%;
+            left: calc(50% - 2px);
+            top: 0;
+        }
+
+        .needle::before {
+            content: '';
+            position: absolute;
+            width: 0;
+            height: 0;
+            left: -8px;
+            top: 5px;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-bottom: 20px solid var(--needle-color);
+        }
+        
+        .wind-needle {
+            display: none; /* Hidden by default */
+            transition: transform 0.2s ease-in-out;
+        }
+
+        .wind-needle::before {
+            content: '';
+            position: absolute;
+            width: 0;
+            height: 0;
+            left: -8px;
+            top: 15px; /* Slightly lower to not overlap */
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-bottom: 20px solid var(--wind-needle-color);
+            opacity: 0.8;
+        }
+        
+        .heading-display {
+            font-size: 1.5em;
+            margin-top: 10px;
+        }
+
+        /* Controls */
+        .controls, .results {
+            width: 100%;
+        }
+
+        .input-group {
+            margin: 15px 0;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            color: var(--border-color);
+        }
+
+        input[type="number"] {
+            width: 100px;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background-color: var(--compass-bg);
+            color: var(--text-color);
+            font-size: 1.2em;
+            text-align: center;
+        }
+        
+        button {
+            width: 100%;
+            padding: 15px;
+            font-size: 1.2em;
+            font-weight: bold;
+            border: none;
+            border-radius: 12px;
+            background-color: var(--wind-needle-color);
+            color: var(--text-color);
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 10px;
+        }
+
+        button:active {
+            background-color: #2980b9;
+        }
+
+        #permission-button {
+            background-color: var(--needle-color);
+        }
+        #permission-button:active {
+            background-color: #c0392b;
+        }
+        
+        /* Results */
+        .results {
+            background-color: rgba(0,0,0,0.2);
+            padding: 15px;
+            border-radius: 12px;
+            margin-top: 15px;
+        }
+
+        #crosswind-output {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #f1c40f;
+        }
+
+        #crosswind-direction {
+            font-size: 1.2em;
+        }
+
+        footer {
+            font-size: 0.8em;
+            color: var(--border-color);
+            padding-bottom: 10px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div id="permission-container">
+            <p>Please grant permission to access device orientation.</p>
+            <button id="permission-button">Allow Access</button>
+        </div>
+
+        <div id="app-container" style="display: none;">
+            
+            <div class="compass-container">
+                <div class="compass" id="compass">
+                    <div class="compass-rose"></div>
+                    <div class="wind-needle" id="wind-needle"></div>
+                    <div class="needle"></div>
+                </div>
+                <div class="heading-display"><span id="heading">--</span>°</div>
+            </div>
+
+            <div class="controls">
+                <div class="input-group">
+                    <label for="wind-speed">Wind Speed (mph/kph)</label>
+                    <input type="number" id="wind-speed" value="10" min="0" inputmode="decimal">
+                </div>
+                <button id="set-wind-btn">1. Set Wind Direction</button>
+            </div>
+
+            <div class="results">
+                <label>Crosswind Speed</label>
+                <div id="crosswind-output">0.0</div>
+                <div id="crosswind-direction">---</div>
+            </div>
+
+        </div>
+    </div>
+    
+    <footer>Point phone toward target to see live crosswind.</footer>
+
+    <script>
+        // --- PWA Service Worker ---
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('Service worker registered.', reg))
+                    .catch(err => console.error('Service worker registration failed:', err));
+            });
+        }
+
+        // --- App Logic ---
+        document.addEventListener('DOMContentLoaded', () => {
+            const permissionContainer = document.getElementById('permission-container');
+            const permissionButton = document.getElementById('permission-button');
+            const appContainer = document.getElementById('app-container');
+
+            const compass = document.getElementById('compass');
+            const windNeedle = document.getElementById('wind-needle');
+            const headingDisplay = document.getElementById('heading');
+            const setWindBtn = document.getElementById('set-wind-btn');
+            const windSpeedInput = document.getElementById('wind-speed');
+            const crosswindOutput = document.getElementById('crosswind-output');
+            const crosswindDirectionDisplay = document.getElementById('crosswind-direction');
+
+            let currentHeading = 0;
+            let windDirection = null;
+
+            // Function to request permission on iOS 13+
+            const requestDeviceOrientation = () => {
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    DeviceOrientationEvent.requestPermission()
+                        .then(permissionState => {
+                            if (permissionState === 'granted') {
+                                window.addEventListener('deviceorientation', handleOrientation);
+                                permissionContainer.style.display = 'none';
+                                appContainer.style.display = 'block';
+                            } else {
+                                alert('Permission not granted. The compass will not work.');
+                            }
+                        })
+                        .catch(console.error);
+                } else {
+                    // Handle non-iOS 13+ devices
+                    window.addEventListener('deviceorientation', handleOrientation);
+                    permissionContainer.style.display = 'none';
+                    appContainer.style.display = 'block';
+                }
+            };
+            
+            permissionButton.addEventListener('click', requestDeviceOrientation);
+
+            function handleOrientation(event) {
+                // Use webkitCompassHeading for iOS, or alpha for other devices
+                let heading = event.webkitCompassHeading || event.alpha;
+
+                if (heading === null) return;
+                
+                currentHeading = heading;
+
+                // Update UI
+                headingDisplay.textContent = Math.round(currentHeading);
+                compass.style.transform = `rotate(${-currentHeading}deg)`;
+                
+                // If wind direction is set, calculate crosswind
+                if (windDirection !== null) {
+                    calculateCrosswind();
+                }
+            }
+
+            setWindBtn.addEventListener('click', () => {
+                windDirection = currentHeading;
+                windNeedle.style.transform = `rotate(${windDirection}deg)`;
+                windNeedle.style.display = 'block';
+                setWindBtn.textContent = `Wind Set: ${Math.round(windDirection)}°`;
+                console.log(`Wind direction set to: ${windDirection}`);
+                calculateCrosswind(); // Initial calculation
+            });
+
+            windSpeedInput.addEventListener('input', () => {
+                if (windDirection !== null) {
+                    calculateCrosswind();
+                }
+            });
+
+            function calculateCrosswind() {
+                const windSpeed = parseFloat(windSpeedInput.value) || 0;
+                
+                // Angle difference in degrees
+                let angleDifference = windDirection - currentHeading;
+
+                // Normalize angle to be between -180 and 180
+                if (angleDifference > 180) angleDifference -= 360;
+                if (angleDifference < -180) angleDifference += 360;
+
+                // Convert angle to radians for Math.sin()
+                const angleInRadians = angleDifference * (Math.PI / 180);
+
+                // Calculate crosswind speed
+                const crosswindSpeed = windSpeed * Math.sin(angleInRadians);
+                
+                // Display results
+                crosswindOutput.textContent = Math.abs(crosswindSpeed).toFixed(1);
+
+                // Determine direction (Left/Right)
+                let direction = '---';
+                if (crosswindSpeed > 0.1) {
+                    direction = 'From Left';
+                } else if (crosswindSpeed < -0.1) {
+                    direction = 'From Right';
+                } else {
+                    direction = 'Head/Tail Wind';
+                }
+                crosswindDirectionDisplay.textContent = direction;
+            }
+        });
+    </script>
+
+    <script>
+        // Inline Manifest
+        const manifest = {
+            "name": "Crosswind Calculator",
+            "short_name": "Crosswind",
+            "start_url": ".",
+            "display": "standalone",
+            "background_color": "#2c3e50",
+            "theme_color": "#2c3e50",
+            "description": "A simple PWA to calculate bullet crosswind using phone's compass.",
+            "icons": [{
+                "src": "https://assets.codepen.io/296057/wind-icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png"
+            }, {
+                "src": "https://assets.codepen.io/296057/wind-icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png"
+            }]
+        };
+        const manifestBlob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+        const manifestURL = URL.createObjectURL(manifestBlob);
+        document.querySelector('link[rel="manifest"]').setAttribute('href', manifestURL);
+
+        // Inline Service Worker
+        const swCode = `
+            const CACHE_NAME = 'crosswind-cache-v1';
+            const ASSETS_TO_CACHE = [
+                '/',
+                'index.html' // Should match the name of your file
+            ];
+
+            self.addEventListener('install', event => {
+                event.waitUntil(
+                    caches.open(CACHE_NAME).then(cache => {
+                        console.log('Opened cache');
+                        return cache.addAll(ASSETS_TO_CACHE);
+                    })
+                );
+            });
+
+            self.addEventListener('fetch', event => {
+                event.respondWith(
+                    caches.match(event.request).then(response => {
+                        // Cache hit - return response
+                        return response || fetch(event.request);
+                    })
+                );
+            });
+
+            self.addEventListener('activate', event => {
+              const cacheWhitelist = [CACHE_NAME];
+              event.waitUntil(
+                caches.keys().then(cacheNames => {
+                  return Promise.all(
+                    cacheNames.map(cacheName => {
+                      if (cacheWhitelist.indexOf(cacheName) === -1) {
+                        return caches.delete(cacheName);
+                      }
+                    })
+                  );
+                })
+              );
+            });
+        `;
+        const swBlob = new Blob([swCode], { type: 'application/javascript' });
+        const swURL = URL.createObjectURL(swBlob);
+        navigator.serviceWorker.register(swURL);
+    </script>
+</body>
+</html>
