@@ -49,7 +49,7 @@
             border: 5px solid var(--border-color);
             position: relative;
             margin: 20px auto;
-            transition: transform 0.1s linear; /* Faster, smoother transitions */
+            transition: transform 0.1s linear;
         }
 
         .compass-rose {
@@ -274,7 +274,14 @@
             
             // Smoothing filter variables
             let headingHistory = [];
-            const SMOOTHING_FACTOR = 5; // Number of readings to average
+            const SMOOTHING_FACTOR = 5;
+            
+            // Rotation tracking for smooth CSS transitions
+            let compassRotation = 0;  // Cumulative rotation for compass rose
+            let windNeedleRotation = 0; // Cumulative rotation for wind needle
+            let lastHeading = 0;      // Track previous heading
+            let lastWindRelativeAngle = 0; // Track previous wind needle angle
+            let isFirstReading = true;
             
             // Load saved calibration
             const savedCalibration = localStorage.getItem('compass-calibration');
@@ -291,10 +298,54 @@
 
             // Function to normalize heading to 0-360 with high precision
             const normalizeHeading = (heading) => {
-                // Round to 1 decimal place to prevent accumulation
                 heading = Math.round(heading * 10) / 10;
                 heading = heading % 360;
                 return heading < 0 ? heading + 360 : heading;
+            };
+
+            // Calculate the shortest angular difference between two angles
+            const getAngularDifference = (angle1, angle2) => {
+                let diff = angle1 - angle2;
+                while (diff > 180) diff -= 360;
+                while (diff < -180) diff += 360;
+                return diff;
+            };
+
+            // Update compass rotation smoothly without reversals
+            const updateCompassRotation = (newHeading) => {
+                if (isFirstReading) {
+                    lastHeading = newHeading;
+                    compassRotation = -newHeading; // Start with negative because we want north at top
+                    isFirstReading = false;
+                    return compassRotation;
+                }
+
+                // Calculate the shortest angular difference
+                const diff = getAngularDifference(newHeading, lastHeading);
+                
+                // Add the difference to our cumulative rotation (negative for compass rose)
+                compassRotation -= diff;
+                
+                // Update last heading
+                lastHeading = newHeading;
+                
+                return compassRotation;
+            };
+
+            // Update wind needle rotation smoothly
+            const updateWindNeedleRotation = (windDirection, currentHeading) => {
+                const relativeWindAngle = normalizeHeading(windDirection - currentHeading);
+                
+                // Calculate the difference from last wind needle position
+                const diff = getAngularDifference(relativeWindAngle, lastWindRelativeAngle);
+                
+                // Add the difference to cumulative wind needle rotation
+                windNeedleRotation += diff;
+                
+                // Update last wind relative angle
+                lastWindRelativeAngle = relativeWindAngle;
+                
+                return windNeedleRotation;
             };
 
             // Smoothing filter for heading values
@@ -310,12 +361,7 @@
                 
                 for (let i = 0; i < headingHistory.length; i++) {
                     let angle = headingHistory[i];
-                    let diff = angle - refAngle;
-                    
-                    // Normalize difference to [-180, 180]
-                    while (diff > 180) diff -= 360;
-                    while (diff < -180) diff += 360;
-                    
+                    let diff = getAngularDifference(angle, refAngle);
                     sum += refAngle + diff;
                 }
                 
@@ -332,8 +378,11 @@
                 localStorage.setItem('compass-calibration', calibrationOffset.toString());
                 calibrationDisplay.textContent = Math.round(calibrationOffset);
                 
-                // Reset smoothing
+                // Reset smoothing and rotation tracking
                 headingHistory = [];
+                isFirstReading = true;
+                compassRotation = 0;
+                windNeedleRotation = 0;
                 
                 console.log(`Compass calibrated. Offset: ${calibrationOffset}°`);
             };
@@ -393,14 +442,14 @@
                 // Update UI
                 headingDisplay.textContent = Math.round(currentHeading);
 
-                // Rotate compass rose to keep North at top (use integer degrees for smoother CSS)
-                const compassRotation = -Math.round(currentHeading);
-                compassRose.style.transform = `rotate(${compassRotation}deg)`;
+                // Update compass rose rotation smoothly
+                const smoothCompassRotation = updateCompassRotation(currentHeading);
+                compassRose.style.transform = `rotate(${smoothCompassRotation}deg)`;
 
-                // Keep wind needle pointing to absolute wind direction
+                // Update wind needle if set
                 if (windDirection !== null) {
-                    const relativeWindDirection = Math.round(windDirection - currentHeading);
-                    windNeedle.style.transform = `rotate(${relativeWindDirection}deg)`;
+                    const smoothWindRotation = updateWindNeedleRotation(windDirection, currentHeading);
+                    windNeedle.style.transform = `rotate(${smoothWindRotation}deg)`;
                     calculateCrosswind();
                 }
             }
@@ -409,6 +458,11 @@
                 windDirection = currentHeading;
                 windNeedle.style.display = 'block';
                 setWindBtn.textContent = `Wind Set: ${Math.round(windDirection)}°`;
+                
+                // Initialize wind needle rotation tracking
+                lastWindRelativeAngle = 0;
+                windNeedleRotation = windDirection - currentHeading;
+                
                 console.log(`Wind direction set to: ${windDirection}°`);
                 calculateCrosswind(); // Initial calculation
             });
@@ -423,11 +477,7 @@
                 const windSpeed = parseFloat(windSpeedInput.value) || 0;
                 
                 // Angle difference in degrees (wind direction relative to current heading)
-                let angleDifference = windDirection - currentHeading;
-
-                // Normalize angle to be between -180 and 180
-                while (angleDifference > 180) angleDifference -= 360;
-                while (angleDifference < -180) angleDifference += 360;
+                let angleDifference = getAngularDifference(windDirection, currentHeading);
 
                 // Convert angle to radians for Math.sin()
                 const angleInRadians = angleDifference * (Math.PI / 180);
