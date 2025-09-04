@@ -41,7 +41,6 @@
             box-sizing: border-box;
         }
         
-        /* Compass Styles */
         .compass {
             width: 250px;
             height: 250px;
@@ -50,7 +49,7 @@
             border: 5px solid var(--border-color);
             position: relative;
             margin: 20px auto;
-            transition: transform 0.3s ease-out;
+            transition: transform 0.1s linear; /* Faster, smoother transitions */
         }
 
         .compass-rose {
@@ -60,7 +59,7 @@
             top: 0;
             left: 0;
             background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="47" y="10" font-size="8" fill="%23ecf0f1" font-family="sans-serif" font-weight="bold">N</text><text x="47" y="98" font-size="8" fill="%23ecf0f1" font-family="sans-serif">S</text><text x="90" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">E</text><text x="4" y="53" font-size="8" fill="%23ecf0f1" font-family="sans-serif">W</text></svg>');
-            transition: transform 0.3s ease-out;
+            transition: transform 0.1s linear;
         }
         
         .needle, .wind-needle {
@@ -69,7 +68,7 @@
             height: 100%;
             left: calc(50% - 2px);
             top: 0;
-            transition: transform 0.3s ease-out;
+            transition: transform 0.1s linear;
         }
 
         .needle::before {
@@ -85,7 +84,7 @@
         }
         
         .wind-needle {
-            display: none; /* Hidden by default */
+            display: none;
         }
 
         .wind-needle::before {
@@ -94,7 +93,7 @@
             width: 0;
             height: 0;
             left: -8px;
-            top: 15px; /* Slightly lower to not overlap */
+            top: 15px;
             border-left: 10px solid transparent;
             border-right: 10px solid transparent;
             border-bottom: 20px solid var(--wind-needle-color);
@@ -106,7 +105,6 @@
             margin-top: 10px;
         }
 
-        /* Controls */
         .controls, .results {
             width: 100%;
         }
@@ -144,7 +142,7 @@
             color: var(--text-color);
             cursor: pointer;
             transition: background-color 0.2s;
-            margin-top: 10px;
+            margin: 5px 0;
         }
 
         button:active {
@@ -157,8 +155,16 @@
         #permission-button:active {
             background-color: #c0392b;
         }
+
+        #calibrate-button {
+            background-color: #f39c12;
+            font-size: 1em;
+            padding: 10px;
+        }
+        #calibrate-button:active {
+            background-color: #e67e22;
+        }
         
-        /* Results */
         .results {
             background-color: rgba(0,0,0,0.2);
             padding: 15px;
@@ -182,6 +188,11 @@
             padding-bottom: 10px;
         }
 
+        .debug-info {
+            font-size: 0.8em;
+            color: var(--border-color);
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -201,9 +212,14 @@
                     <div class="needle"></div>
                 </div>
                 <div class="heading-display"><span id="heading">--</span>°</div>
+                <div class="debug-info">
+                    Raw: <span id="raw-heading">--</span>° | 
+                    Offset: <span id="calibration-display">0</span>°
+                </div>
             </div>
 
             <div class="controls">
+                <button id="calibrate-button">📍 Calibrate North</button>
                 <div class="input-group">
                     <label for="wind-speed">Wind Speed (mph/kph)</label>
                     <input type="number" id="wind-speed" value="10" min="0" inputmode="decimal">
@@ -220,7 +236,7 @@
         </div>
     </div>
     
-    <footer>Point phone toward target to see live crosswind.</footer>
+    <footer>Point phone toward target to see live crosswind. Use calibrate if compass drifts.</footer>
 
     <script>
         // --- PWA Service Worker ---
@@ -242,15 +258,30 @@
             const compassRose = document.getElementById('compass-rose');
             const windNeedle = document.getElementById('wind-needle');
             const headingDisplay = document.getElementById('heading');
+            const rawHeadingDisplay = document.getElementById('raw-heading');
+            const calibrationDisplay = document.getElementById('calibration-display');
+            const calibrateButton = document.getElementById('calibrate-button');
             const setWindBtn = document.getElementById('set-wind-btn');
             const windSpeedInput = document.getElementById('wind-speed');
             const crosswindOutput = document.getElementById('crosswind-output');
             const crosswindDirectionDisplay = document.getElementById('crosswind-direction');
 
             let currentHeading = 0;
+            let rawHeading = 0;
             let windDirection = null;
             let calibrationOffset = 0;
             let isIOS = false;
+            
+            // Smoothing filter variables
+            let headingHistory = [];
+            const SMOOTHING_FACTOR = 5; // Number of readings to average
+            
+            // Load saved calibration
+            const savedCalibration = localStorage.getItem('compass-calibration');
+            if (savedCalibration) {
+                calibrationOffset = parseFloat(savedCalibration);
+                calibrationDisplay.textContent = Math.round(calibrationOffset);
+            }
 
             // Detect iOS
             const detectIOS = () => {
@@ -258,11 +289,56 @@
                        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             };
 
-            // Function to normalize heading to 0-360
+            // Function to normalize heading to 0-360 with high precision
             const normalizeHeading = (heading) => {
+                // Round to 1 decimal place to prevent accumulation
+                heading = Math.round(heading * 10) / 10;
                 heading = heading % 360;
                 return heading < 0 ? heading + 360 : heading;
             };
+
+            // Smoothing filter for heading values
+            const smoothHeading = (newHeading) => {
+                headingHistory.push(newHeading);
+                if (headingHistory.length > SMOOTHING_FACTOR) {
+                    headingHistory.shift();
+                }
+                
+                // Handle wraparound (350° + 10° should average to 0°, not 180°)
+                let sum = 0;
+                let refAngle = headingHistory[0];
+                
+                for (let i = 0; i < headingHistory.length; i++) {
+                    let angle = headingHistory[i];
+                    let diff = angle - refAngle;
+                    
+                    // Normalize difference to [-180, 180]
+                    while (diff > 180) diff -= 360;
+                    while (diff < -180) diff += 360;
+                    
+                    sum += refAngle + diff;
+                }
+                
+                return normalizeHeading(sum / headingHistory.length);
+            };
+
+            // Calibration function
+            const calibrateCompass = () => {
+                // Set calibration offset so current heading points to North (0°)
+                calibrationOffset = -rawHeading;
+                calibrationOffset = normalizeHeading(calibrationOffset);
+                
+                // Save calibration to localStorage
+                localStorage.setItem('compass-calibration', calibrationOffset.toString());
+                calibrationDisplay.textContent = Math.round(calibrationOffset);
+                
+                // Reset smoothing
+                headingHistory = [];
+                
+                console.log(`Compass calibrated. Offset: ${calibrationOffset}°`);
+            };
+
+            calibrateButton.addEventListener('click', calibrateCompass);
 
             // Function to request permission on iOS 13+
             const requestDeviceOrientation = () => {
@@ -304,18 +380,26 @@
                     return; // No orientation data available
                 }
 
+                // Store raw heading for debugging and calibration
+                rawHeading = normalizeHeading(heading);
+                rawHeadingDisplay.textContent = Math.round(rawHeading);
+
                 // Apply calibration offset and normalize
-                currentHeading = normalizeHeading(heading + calibrationOffset);
+                let calibratedHeading = normalizeHeading(rawHeading + calibrationOffset);
+                
+                // Apply smoothing
+                currentHeading = smoothHeading(calibratedHeading);
 
                 // Update UI
                 headingDisplay.textContent = Math.round(currentHeading);
 
-                // Rotate compass rose to keep North at top
-                compassRose.style.transform = `rotate(${-currentHeading}deg)`;
+                // Rotate compass rose to keep North at top (use integer degrees for smoother CSS)
+                const compassRotation = -Math.round(currentHeading);
+                compassRose.style.transform = `rotate(${compassRotation}deg)`;
 
                 // Keep wind needle pointing to absolute wind direction
                 if (windDirection !== null) {
-                    const relativeWindDirection = windDirection - currentHeading;
+                    const relativeWindDirection = Math.round(windDirection - currentHeading);
                     windNeedle.style.transform = `rotate(${relativeWindDirection}deg)`;
                     calculateCrosswind();
                 }
@@ -369,7 +453,7 @@
     </script>
 
     <script>
-        // Inline Manifest and Service Worker code remains the same...
+        // Inline Manifest and Service Worker code
         const manifest = {
             "name": "Crosswind Calculator",
             "short_name": "Crosswind",
